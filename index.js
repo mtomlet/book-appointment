@@ -9,10 +9,10 @@
  * Request Body:
  * {
  *   "client_id": "uuid",              // Required: Client UUID
- *   "service": "uuid",                // Required: Primary service UUID
+ *   "service": "string",              // Required: Service name (see SERVICE_MAP below)
  *   "datetime": "ISO-8601",           // Required: Appointment start time
  *   "stylist": "uuid",                // Optional: Stylist UUID
- *   "additional_services": ["uuid"]   // Optional: Array of add-on service UUIDs
+ *   "additional_services": ["string"] // Optional: Array of add-on service names
  * }
  *
  * Response:
@@ -22,29 +22,29 @@
  *   "message": "Appointment booked successfully"
  * }
  *
- * SERVICES REFERENCE:
- * Primary Services:
- * - Men's Haircut: 480b1fd6-1c42-4c8a-add3-a7600102a9b1
- * - Women's Haircut: 54761597-e106-480a-898e-a76001002356
- * - Children's Haircut: d16c704b-3ff0-4d18-b73b-a7600102fdf1
+ * KEEP IT CUT SERVICES (Mapped to Meevo Dev):
  *
- * Add-On Services (can be booked standalone or with haircut):
- * - Blow Out (Wash): 978cbc02-048b-4d39-9f0d-a760010f32f8
- * - Blow Out With Flat Iron: 70886ed8-46fc-48c2-ac89-a760010fa24b
- * - Blow Out With Curls: d41e7bcf-8d53-40ea-9443-a760010ff707
- * - Bang Trim: 0bd1b8b0-1252-47be-8862-a7600106fb6d
+ * Primary Services:
+ * - "haircut_standard" ($26) -> Men's Haircut: 480b1fd6-1c42-4c8a-add3-a7600102a9b1
+ * - "haircut_skin_fade" ($32) -> Men's Haircut: 480b1fd6-1c42-4c8a-add3-a7600102a9b1
+ * - "long_locks" ($60) -> Women's Haircut: 54761597-e106-480a-898e-a76001002356
+ *
+ * Add-On Services (for haircut, skin fade, long locks):
+ * - "wash" ($6) -> Blow Out: 978cbc02-048b-4d39-9f0d-a760010f32f8
+ * - "grooming" ($14) -> Beard Trim: aff1ff92-15a6-4090-bf75-abf80103eebb
  *
  * USAGE EXAMPLES:
  *
- * 1. Haircut only:
- * { "client_id": "...", "service": "480b1fd6...", "datetime": "2025-12-19T10:00:00-08:00" }
+ * 1. Haircut Standard only:
+ * { "client_id": "...", "service": "haircut_standard", "datetime": "2025-12-19T10:00:00-08:00" }
  *
- * 2. Haircut + Wash (Blow Out as add-on):
- * { "client_id": "...", "service": "480b1fd6...", "datetime": "...",
- *   "additional_services": ["978cbc02-048b-4d39-9f0d-a760010f32f8"] }
+ * 2. Haircut Skin Fade + Wash + Grooming:
+ * { "client_id": "...", "service": "haircut_skin_fade", "datetime": "...",
+ *   "additional_services": ["wash", "grooming"] }
  *
- * 3. Just a Wash (Blow Out standalone):
- * { "client_id": "...", "service": "978cbc02-048b-4d39-9f0d-a760010f32f8", "datetime": "..." }
+ * 3. Long Locks + Wash:
+ * { "client_id": "...", "service": "long_locks", "datetime": "...",
+ *   "additional_services": ["wash"] }
  */
 
 const express = require('express');
@@ -62,34 +62,47 @@ const CONFIG = {
   LOCATION_ID: '5'
 };
 
-// Service name to ID mapping for Retell AI convenience
+// Keep It Cut service names to Meevo Dev IDs
+// Production will need different IDs - these are DEV mappings
 const SERVICE_MAP = {
-  // Primary haircuts
+  // PRIMARY SERVICES (Choose ONE)
+  // Haircut Standard ($26) - maps to Men's Haircut
+  'haircut_standard': '480b1fd6-1c42-4c8a-add3-a7600102a9b1',
+  'haircut standard': '480b1fd6-1c42-4c8a-add3-a7600102a9b1',
+  'standard': '480b1fd6-1c42-4c8a-add3-a7600102a9b1',
+  'haircut': '480b1fd6-1c42-4c8a-add3-a7600102a9b1',
+
+  // Haircut Skin Fade ($32) - maps to Men's Haircut (no skin fade in dev)
+  'haircut_skin_fade': '480b1fd6-1c42-4c8a-add3-a7600102a9b1',
+  'haircut skin fade': '480b1fd6-1c42-4c8a-add3-a7600102a9b1',
+  'skin_fade': '480b1fd6-1c42-4c8a-add3-a7600102a9b1',
+  'skin fade': '480b1fd6-1c42-4c8a-add3-a7600102a9b1',
+  'fade': '480b1fd6-1c42-4c8a-add3-a7600102a9b1',
+
+  // Long Locks ($60) - maps to Women's Haircut
+  'long_locks': '54761597-e106-480a-898e-a76001002356',
+  'long locks': '54761597-e106-480a-898e-a76001002356',
+  'long': '54761597-e106-480a-898e-a76001002356',
+
+  // ADD-ON SERVICES (optional, only for haircuts)
+  // Wash ($6) - maps to Blow Out
+  'wash': '978cbc02-048b-4d39-9f0d-a760010f32f8',
+  'shampoo': '978cbc02-048b-4d39-9f0d-a760010f32f8',
+
+  // Grooming ($14) - maps to Beard Trim & Neck Cleanup
+  'grooming': 'aff1ff92-15a6-4090-bf75-abf80103eebb',
+  'beard': 'aff1ff92-15a6-4090-bf75-abf80103eebb',
+  'beard_trim': 'aff1ff92-15a6-4090-bf75-abf80103eebb',
+  'beard trim': 'aff1ff92-15a6-4090-bf75-abf80103eebb',
+
+  // Legacy mappings for backwards compatibility
   'mens_haircut': '480b1fd6-1c42-4c8a-add3-a7600102a9b1',
   'mens haircut': '480b1fd6-1c42-4c8a-add3-a7600102a9b1',
   'womens_haircut': '54761597-e106-480a-898e-a76001002356',
   'womens haircut': '54761597-e106-480a-898e-a76001002356',
   'childrens_haircut': 'd16c704b-3ff0-4d18-b73b-a7600102fdf1',
   'childrens haircut': 'd16c704b-3ff0-4d18-b73b-a7600102fdf1',
-  'kids_haircut': 'd16c704b-3ff0-4d18-b73b-a7600102fdf1',
-  'kids haircut': 'd16c704b-3ff0-4d18-b73b-a7600102fdf1',
-
-  // Add-on / Standalone services
-  'wash': '978cbc02-048b-4d39-9f0d-a760010f32f8',
-  'blow_out': '978cbc02-048b-4d39-9f0d-a760010f32f8',
-  'blow out': '978cbc02-048b-4d39-9f0d-a760010f32f8',
-  'blowout': '978cbc02-048b-4d39-9f0d-a760010f32f8',
-  'shampoo': '978cbc02-048b-4d39-9f0d-a760010f32f8',
-
-  'blow_out_flat_iron': '70886ed8-46fc-48c2-ac89-a760010fa24b',
-  'blow out flat iron': '70886ed8-46fc-48c2-ac89-a760010fa24b',
-
-  'blow_out_curls': 'd41e7bcf-8d53-40ea-9443-a760010ff707',
-  'blow out curls': 'd41e7bcf-8d53-40ea-9443-a760010ff707',
-
-  'bang_trim': '0bd1b8b0-1252-47be-8862-a7600106fb6d',
-  'bang trim': '0bd1b8b0-1252-47be-8862-a7600106fb6d',
-  'bangs': '0bd1b8b0-1252-47be-8862-a7600106fb6d'
+  'kids_haircut': 'd16c704b-3ff0-4d18-b73b-a7600102fdf1'
 };
 
 // Helper to resolve service name to ID
@@ -222,24 +235,35 @@ app.get('/health', (req, res) => {
 // Service reference endpoint (for debugging)
 app.get('/services', (req, res) => {
   res.json({
-    primary_services: {
-      'Mens Haircut': '480b1fd6-1c42-4c8a-add3-a7600102a9b1',
-      'Womens Haircut': '54761597-e106-480a-898e-a76001002356',
-      'Childrens Haircut': 'd16c704b-3ff0-4d18-b73b-a7600102fdf1'
-    },
-    addon_services: {
-      'Blow Out (Wash)': '978cbc02-048b-4d39-9f0d-a760010f32f8',
-      'Blow Out With Flat Iron': '70886ed8-46fc-48c2-ac89-a760010fa24b',
-      'Blow Out With Curls': 'd41e7bcf-8d53-40ea-9443-a760010ff707',
-      'Bang Trim': '0bd1b8b0-1252-47be-8862-a7600106fb6d'
-    },
-    usage: {
-      haircut_only: { service: '480b1fd6-1c42-4c8a-add3-a7600102a9b1' },
-      haircut_with_wash: {
-        service: '480b1fd6-1c42-4c8a-add3-a7600102a9b1',
-        additional_services: ['978cbc02-048b-4d39-9f0d-a760010f32f8']
+    keep_it_cut_services: {
+      primary: {
+        'haircut_standard': { price: '$26', meevo_id: '480b1fd6-1c42-4c8a-add3-a7600102a9b1' },
+        'haircut_skin_fade': { price: '$32', meevo_id: '480b1fd6-1c42-4c8a-add3-a7600102a9b1' },
+        'long_locks': { price: '$60', meevo_id: '54761597-e106-480a-898e-a76001002356' }
       },
-      wash_only: { service: '978cbc02-048b-4d39-9f0d-a760010f32f8' }
+      addons: {
+        'wash': { price: '$6', meevo_id: '978cbc02-048b-4d39-9f0d-a760010f32f8', note: 'Optional add-on for any haircut' },
+        'grooming': { price: '$14', meevo_id: 'aff1ff92-15a6-4090-bf75-abf80103eebb', note: 'Optional add-on for any haircut' }
+      }
+    },
+    usage_examples: {
+      haircut_standard_only: {
+        service: 'haircut_standard',
+        additional_services: []
+      },
+      haircut_skin_fade_with_wash_and_grooming: {
+        service: 'haircut_skin_fade',
+        additional_services: ['wash', 'grooming']
+      },
+      long_locks_with_wash: {
+        service: 'long_locks',
+        additional_services: ['wash']
+      }
+    },
+    booking_rules: {
+      rule_1: 'Choose ONE primary service (haircut_standard, haircut_skin_fade, or long_locks)',
+      rule_2: 'Wash and Grooming are optional add-ons for any primary service',
+      rule_3: 'You cannot book just Wash or Grooming alone - they require a primary service'
     }
   });
 });
