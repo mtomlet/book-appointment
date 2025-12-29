@@ -132,6 +132,70 @@ async function getToken() {
   return token;
 }
 
+// Helper: Check if error is about a PAST appointment conflict
+function isPastAppointmentConflict(errorMessage) {
+  if (!errorMessage || !errorMessage.includes('already booked on')) return null;
+
+  // Extract date from "already booked on 12/26/2025"
+  const dateMatch = errorMessage.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (!dateMatch) return null;
+
+  const [_, month, day, year] = dateMatch;
+  const conflictDate = new Date(year, parseInt(month) - 1, parseInt(day));
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (conflictDate < today) {
+    return { month, day, year, date: conflictDate };
+  }
+  return null;
+}
+
+// Helper: Find and cancel stale past appointment
+async function cancelStaleAppointment(authToken, clientId, serviceId, conflictDate) {
+  console.log('🔍 Looking for stale appointment to cancel...');
+
+  try {
+    // Get client's appointments
+    const appointmentsRes = await axios.get(
+      `${CONFIG.API_URL}/book/client/${clientId}/services?TenantId=${CONFIG.TENANT_ID}&LocationId=${CONFIG.LOCATION_ID}&StartDate=2025-01-01`,
+      { headers: { Authorization: `Bearer ${authToken}` }}
+    );
+
+    const appointments = appointmentsRes.data?.data || [];
+    console.log(`📋 Found ${appointments.length} appointments for client`);
+
+    // Find the stale appointment (matching service, not cancelled, in the past)
+    const staleAppt = appointments.find(apt => {
+      const aptDate = new Date(apt.startTime);
+      const aptServiceId = apt.serviceId;
+      return !apt.isCancelled &&
+             aptServiceId === serviceId &&
+             aptDate < new Date();
+    });
+
+    if (!staleAppt) {
+      console.log('❌ Could not find stale appointment to cancel');
+      return false;
+    }
+
+    console.log(`🗑️ Found stale appointment: ${staleAppt.appointmentServiceId} on ${staleAppt.startTime}`);
+
+    // Cancel the stale appointment
+    const cancelRes = await axios.delete(
+      `${CONFIG.API_URL}/book/service/${staleAppt.appointmentServiceId}?TenantId=${CONFIG.TENANT_ID}&LocationId=${CONFIG.LOCATION_ID}&ConcurrencyCheckDigits=${staleAppt.concurrencyCheckDigits}`,
+      { headers: { Authorization: `Bearer ${authToken}` }}
+    );
+
+    console.log('✅ Stale appointment cancelled successfully');
+    return true;
+
+  } catch (error) {
+    console.error('❌ Error cancelling stale appointment:', error.response?.data || error.message);
+    return false;
+  }
+}
+
 app.post('/book', async (req, res) => {
   console.log('📅 Booking request received:', JSON.stringify(req.body));
 
@@ -212,11 +276,80 @@ app.post('/book', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Booking error:', error.response?.data || error.message);
+    const errorMessage = error.response?.data?.error?.message || error.message;
+    console.error('❌ Booking error:', errorMessage);
+
+    // Check if this is a stale past appointment conflict
+    const pastConflict = isPastAppointmentConflict(errorMessage);
+
+    if (pastConflict) {
+      console.log(`🔄 Detected stale past appointment conflict (${pastConflict.month}/${pastConflict.day}/${pastConflict.year}). Attempting auto-recovery...`);
+
+      const authToken = await getToken();
+      const serviceId = resolveServiceId(req.body.service);
+      const cancelled = await cancelStaleAppointment(authToken, req.body.client_id, serviceId, pastConflict.date);
+
+      if (cancelled) {
+        // Retry the booking
+        console.log('🔄 Retrying booking after cancelling stale appointment...');
+
+        try {
+          const bookingData = new URLSearchParams({
+            ServiceId: serviceId,
+            StartTime: req.body.datetime,
+            ClientId: req.body.client_id,
+            ClientGender: '2035'
+          });
+
+          if (req.body.stylist) {
+            bookingData.append('EmployeeId', req.body.stylist);
+          }
+
+          if (req.body.additional_services && Array.isArray(req.body.additional_services)) {
+            const resolvedAddons = req.body.additional_services
+              .map(s => resolveServiceId(s))
+              .filter(s => s !== null);
+            if (resolvedAddons.length > 0) {
+              bookingData.append('AdditionalServiceIds', resolvedAddons.join(','));
+            }
+          }
+
+          const retryRes = await axios.post(
+            `${CONFIG.API_URL}/book/service?TenantId=${CONFIG.TENANT_ID}&LocationId=${CONFIG.LOCATION_ID}`,
+            bookingData.toString(),
+            {
+              headers: {
+                Authorization: `Bearer ${authToken}`,
+                'Content-Type': 'application/x-www-form-urlencoded'
+              }
+            }
+          );
+
+          const appointmentId = retryRes.data?.data?.appointmentId || retryRes.data?.appointmentId;
+          console.log('✅ Retry successful! Appointment ID:', appointmentId);
+
+          return res.json({
+            success: true,
+            appointment_id: appointmentId,
+            service_id: serviceId,
+            message: 'Appointment booked successfully (auto-recovered from stale past appointment)',
+            auto_recovered: true
+          });
+
+        } catch (retryError) {
+          console.error('❌ Retry also failed:', retryError.response?.data || retryError.message);
+          return res.json({
+            success: false,
+            error: retryError.response?.data?.error?.message || retryError.message,
+            note: 'Auto-recovery attempted but retry failed'
+          });
+        }
+      }
+    }
 
     res.json({
       success: false,
-      error: error.response?.data?.error?.message || error.message
+      error: errorMessage
     });
   }
 });
