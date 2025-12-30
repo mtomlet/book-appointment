@@ -168,9 +168,13 @@ async function cancelStaleAppointment(authToken, clientId, serviceId, conflictDa
   console.log(`🔍 Looking for stale appointment to cancel... (clientId: ${clientId}, serviceId: ${serviceId})`);
 
   try {
-    // Get client's appointments
+    // Get client's appointments from 30 days ago (Meevo limits to 6 months)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const startDate = thirtyDaysAgo.toISOString().split('T')[0];
+
     const appointmentsRes = await axios.get(
-      `${CONFIG.API_URL}/book/client/${clientId}/services?TenantId=${CONFIG.TENANT_ID}&LocationId=${CONFIG.LOCATION_ID}&StartDate=2025-01-01`,
+      `${CONFIG.API_URL}/book/client/${clientId}/services?TenantId=${CONFIG.TENANT_ID}&LocationId=${CONFIG.LOCATION_ID}&StartDate=${startDate}`,
       { headers: { Authorization: `Bearer ${authToken}` }}
     );
 
@@ -401,8 +405,13 @@ app.post('/debug/appointments', async (req, res) => {
 
   try {
     const authToken = await getToken();
+    // Get appointments from 30 days ago (Meevo limits to 6 months)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const startDate = thirtyDaysAgo.toISOString().split('T')[0];
+
     const appointmentsRes = await axios.get(
-      `${CONFIG.API_URL}/book/client/${client_id}/services?TenantId=${CONFIG.TENANT_ID}&LocationId=${CONFIG.LOCATION_ID}&StartDate=2025-01-01`,
+      `${CONFIG.API_URL}/book/client/${client_id}/services?TenantId=${CONFIG.TENANT_ID}&LocationId=${CONFIG.LOCATION_ID}&StartDate=${startDate}`,
       { headers: { Authorization: `Bearer ${authToken}` }}
     );
 
