@@ -392,6 +392,53 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Debug endpoint - check client appointments
+app.post('/debug/appointments', async (req, res) => {
+  const { client_id } = req.body;
+  if (!client_id) {
+    return res.json({ error: 'client_id required' });
+  }
+
+  try {
+    const authToken = await getToken();
+    const appointmentsRes = await axios.get(
+      `${CONFIG.API_URL}/book/client/${client_id}/services?TenantId=${CONFIG.TENANT_ID}&LocationId=${CONFIG.LOCATION_ID}&StartDate=2025-01-01`,
+      { headers: { Authorization: `Bearer ${authToken}` }}
+    );
+
+    const appointments = appointmentsRes.data?.data || [];
+    const now = new Date();
+
+    const processed = appointments.map(apt => ({
+      id: apt.appointmentServiceId,
+      serviceId: apt.serviceId,
+      startTime: apt.startTime,
+      isCancelled: apt.isCancelled,
+      isStale: !apt.isCancelled && new Date(apt.startTime) < now
+    }));
+
+    res.json({
+      total: appointments.length,
+      now: now.toISOString(),
+      appointments: processed
+    });
+
+  } catch (error) {
+    res.json({ error: error.response?.data || error.message });
+  }
+});
+
+// Debug endpoint - test auto-recovery detection
+app.post('/debug/test-recovery', async (req, res) => {
+  const { error_message } = req.body;
+  const pastConflict = isPastAppointmentConflict(error_message);
+  res.json({
+    input: error_message,
+    detected: pastConflict !== null,
+    conflict: pastConflict
+  });
+});
+
 // Service reference endpoint (for debugging)
 app.get('/services', (req, res) => {
   res.json({
