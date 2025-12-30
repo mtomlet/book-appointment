@@ -139,7 +139,7 @@ function isPastAppointmentConflict(errorMessage) {
     return null;
   }
 
-  // Extract date from "already booked on 12/26/2025"
+  // Extract date from "already booked on 12/26/2025 at 12:00 PM"
   const dateMatch = errorMessage.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
   if (!dateMatch) {
     console.log('🔍 Auto-recovery: Could not parse date from error message');
@@ -147,12 +147,32 @@ function isPastAppointmentConflict(errorMessage) {
   }
 
   const [_, month, day, year] = dateMatch;
-  const conflictDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-  conflictDate.setHours(23, 59, 59, 999); // End of conflict day
+
+  // Try to extract time too (e.g., "at 12:00 PM")
+  const timeMatch = errorMessage.match(/at (\d{1,2}):(\d{2})\s*(AM|PM)/i);
+
+  let conflictDate;
+  if (timeMatch) {
+    let hours = parseInt(timeMatch[1]);
+    const minutes = parseInt(timeMatch[2]);
+    const ampm = timeMatch[3].toUpperCase();
+
+    // Convert to 24-hour
+    if (ampm === 'PM' && hours !== 12) hours += 12;
+    if (ampm === 'AM' && hours === 12) hours = 0;
+
+    conflictDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day), hours, minutes, 0);
+    console.log(`🔍 Auto-recovery: Parsed datetime = ${month}/${day}/${year} ${hours}:${minutes}`);
+  } else {
+    // Fallback: just use end of day
+    conflictDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+    conflictDate.setHours(23, 59, 59, 999);
+    console.log('🔍 Auto-recovery: No time found, using end of day');
+  }
 
   const now = new Date();
 
-  console.log(`🔍 Auto-recovery: Conflict date = ${conflictDate.toISOString()}, Now = ${now.toISOString()}`);
+  console.log(`🔍 Auto-recovery: Conflict datetime = ${conflictDate.toISOString()}, Now = ${now.toISOString()}`);
 
   if (conflictDate < now) {
     console.log('✅ Auto-recovery: Detected PAST appointment conflict - will attempt auto-recovery');
@@ -390,7 +410,7 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'Book Appointment',
-    version: '2.1.0',
+    version: '2.2.0',
     features: ['single_service', 'additional_services', 'service_name_resolution', 'auto_recovery_stale_appointments'],
     timestamp: new Date().toISOString()
   });
