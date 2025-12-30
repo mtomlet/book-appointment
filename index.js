@@ -134,26 +134,38 @@ async function getToken() {
 
 // Helper: Check if error is about a PAST appointment conflict
 function isPastAppointmentConflict(errorMessage) {
-  if (!errorMessage || !errorMessage.includes('already booked on')) return null;
+  if (!errorMessage || !errorMessage.includes('already booked on')) {
+    console.log('🔍 Auto-recovery: No "already booked on" in error message');
+    return null;
+  }
 
   // Extract date from "already booked on 12/26/2025"
   const dateMatch = errorMessage.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (!dateMatch) return null;
+  if (!dateMatch) {
+    console.log('🔍 Auto-recovery: Could not parse date from error message');
+    return null;
+  }
 
   const [_, month, day, year] = dateMatch;
-  const conflictDate = new Date(year, parseInt(month) - 1, parseInt(day));
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const conflictDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+  conflictDate.setHours(23, 59, 59, 999); // End of conflict day
 
-  if (conflictDate < today) {
+  const now = new Date();
+
+  console.log(`🔍 Auto-recovery: Conflict date = ${conflictDate.toISOString()}, Now = ${now.toISOString()}`);
+
+  if (conflictDate < now) {
+    console.log('✅ Auto-recovery: Detected PAST appointment conflict - will attempt auto-recovery');
     return { month, day, year, date: conflictDate };
   }
+
+  console.log('❌ Auto-recovery: Conflict is NOT in the past - no auto-recovery');
   return null;
 }
 
 // Helper: Find and cancel stale past appointment
 async function cancelStaleAppointment(authToken, clientId, serviceId, conflictDate) {
-  console.log('🔍 Looking for stale appointment to cancel...');
+  console.log(`🔍 Looking for stale appointment to cancel... (clientId: ${clientId}, serviceId: ${serviceId})`);
 
   try {
     // Get client's appointments
@@ -165,21 +177,36 @@ async function cancelStaleAppointment(authToken, clientId, serviceId, conflictDa
     const appointments = appointmentsRes.data?.data || [];
     console.log(`📋 Found ${appointments.length} appointments for client`);
 
-    // Find the stale appointment (matching service, not cancelled, in the past)
-    const staleAppt = appointments.find(apt => {
+    const now = new Date();
+
+    // Find ALL stale appointments (not cancelled, in the past) - not just matching service
+    // Sometimes the service ID comparison fails due to service mapping differences
+    const staleAppointments = appointments.filter(apt => {
       const aptDate = new Date(apt.startTime);
-      const aptServiceId = apt.serviceId;
-      return !apt.isCancelled &&
-             aptServiceId === serviceId &&
-             aptDate < new Date();
+      const isStale = !apt.isCancelled && aptDate < now;
+      if (isStale) {
+        console.log(`  📌 Stale appointment found: ${apt.appointmentServiceId} | Service: ${apt.serviceId} | Date: ${apt.startTime}`);
+      }
+      return isStale;
     });
 
+    console.log(`📋 Found ${staleAppointments.length} stale (past) appointments`);
+
+    // First try to find one matching the exact service ID
+    let staleAppt = staleAppointments.find(apt => apt.serviceId === serviceId);
+
+    // If no exact match, cancel the first stale appointment (most likely the cause)
+    if (!staleAppt && staleAppointments.length > 0) {
+      console.log(`⚠️ No exact service match, will cancel first stale appointment`);
+      staleAppt = staleAppointments[0];
+    }
+
     if (!staleAppt) {
-      console.log('❌ Could not find stale appointment to cancel');
+      console.log('❌ Could not find any stale appointment to cancel');
       return false;
     }
 
-    console.log(`🗑️ Found stale appointment: ${staleAppt.appointmentServiceId} on ${staleAppt.startTime}`);
+    console.log(`🗑️ Cancelling stale appointment: ${staleAppt.appointmentServiceId} on ${staleAppt.startTime}`);
 
     // Cancel the stale appointment
     const cancelRes = await axios.delete(
@@ -187,7 +214,7 @@ async function cancelStaleAppointment(authToken, clientId, serviceId, conflictDa
       { headers: { Authorization: `Bearer ${authToken}` }}
     );
 
-    console.log('✅ Stale appointment cancelled successfully');
+    console.log('✅ Stale appointment cancelled successfully:', cancelRes.data);
     return true;
 
   } catch (error) {
@@ -359,8 +386,8 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'Book Appointment',
-    version: '2.0.0',
-    features: ['single_service', 'additional_services', 'service_name_resolution'],
+    version: '2.1.0',
+    features: ['single_service', 'additional_services', 'service_name_resolution', 'auto_recovery_stale_appointments'],
     timestamp: new Date().toISOString()
   });
 });
@@ -403,9 +430,10 @@ app.get('/services', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`\n✅ Book Appointment Server v2.0`);
+  console.log(`\n✅ Book Appointment Server v2.1.0`);
   console.log(`🚀 Listening on port ${PORT}`);
   console.log(`📍 Health check: http://localhost:${PORT}/health`);
   console.log(`📍 Services reference: http://localhost:${PORT}/services`);
-  console.log(`📍 Book endpoint: POST http://localhost:${PORT}/book\n`);
+  console.log(`📍 Book endpoint: POST http://localhost:${PORT}/book`);
+  console.log(`🔄 Auto-recovery for stale past appointments: ENABLED\n`);
 });
