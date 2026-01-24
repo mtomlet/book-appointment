@@ -293,9 +293,9 @@ app.post('/book', async (req, res) => {
         .filter(s => s !== null);
 
       if (resolvedAddons.length > 0) {
-        // Meevo accepts comma-separated UUIDs for AdditionalServiceIds
-        bookingData.append('AdditionalServiceIds', resolvedAddons.join(','));
-        console.log('📦 Adding services:', resolvedAddons);
+        // Use AddOnServiceIds - the correct Meevo parameter name (NOT AdditionalServiceIds)
+        bookingData.append('AddOnServiceIds', resolvedAddons.join(','));
+        console.log('📦 Adding add-on services via AddOnServiceIds:', resolvedAddons);
       }
     }
 
